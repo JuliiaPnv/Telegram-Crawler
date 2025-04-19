@@ -93,8 +93,8 @@ async def authenticate_client():
                         print("Авторизация успешна!")
                 except FloodWaitError as e:
                     print(f"\nСлишком много попыток входа. Подождите {e.seconds} секунд.")
-                    time.sleep(e.seconds)
-                    continue
+                    # Вместо повторной попытки, выходим с ошибкой
+                    raise
                 except Exception as e:
                     print(f"\nОшибка при отправке кода: {str(e)}")
                     raise

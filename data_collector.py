@@ -2,13 +2,15 @@ from telethon.tl.functions.messages import GetHistoryRequest
 from datetime import datetime, timedelta
 import pandas as pd
 import matplotlib.pyplot as plt
+import asyncio
+from asyncio import iscoroutine
 
 async def process_channel(client, channel, stats, university):
     """Обработка канала и сбор статистики"""
     try:
         print(f"Собираем сообщения из {channel.title if hasattr(channel, 'title') else channel.name}...")
-        # Получение сообщений за последние 30 дней
-        messages = await client(GetHistoryRequest(
+        # Запрос истории сообщений
+        resp = client(GetHistoryRequest(
             peer=channel.id,
             offset_id=0,
             offset_date=datetime.now() - timedelta(days=30),
@@ -18,7 +20,11 @@ async def process_channel(client, channel, stats, university):
             min_id=0,
             hash=0
         ))
-        
+        # Ждем результат, если это корутина, иначе используем напрямую
+        if iscoroutine(resp):
+            messages = await resp
+        else:
+            messages = resp
         print(f"Найдено {len(messages.messages)} сообщений")
         # Сбор статистики
         for message in messages.messages:
@@ -63,24 +69,27 @@ async def collect_telegram_data(client):
         }
         
         print("\nНачинаем поиск каналов и групп...")
-        # Поиск каналов и групп
-        for university, names in universities.items():
-            print(f"\nИщем каналы и группы для {university}...")
-            print(f"Варианты поиска: {', '.join(names)}")
-            
-            # Поиск каналов
-            async for dialog in client.iter_dialogs():
-                dialog_name = dialog.name.lower()
-                # Проверяем все варианты названия университета
-                if any(name.lower() in dialog_name for name in names):
-                    print(f"Найден канал/группа: {dialog.name}")
-                    await process_channel(client, dialog, stats, university)
+        # Получаем все диалоги
+        resp = client.iter_dialogs()
+        if iscoroutine(resp):
+            dialogs = await resp
+        else:
+            dialogs = resp
+        for dialog in dialogs:
+            uni = dialog.title if hasattr(dialog, 'title') else dialog.name
+            print(f"Найден канал/группа: {uni}")
+            await process_channel(client, dialog, stats, uni)
         
         # Создание DataFrame
         df = pd.DataFrame(stats)
         
         # Сохранение данных в CSV
         df.to_csv('telegram_stats.csv', index=False)
+        
+        # Если данных нет, пропустить построение графика
+        if df.empty:
+            print("Нет данных для построения графика, пропускаем этот шаг.")
+            return
         
         # Построение графика публикаций по дням
         df['date'] = pd.to_datetime(df['publication_date']).dt.date
