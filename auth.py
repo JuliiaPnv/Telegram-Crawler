@@ -3,6 +3,7 @@ from telethon.errors import AuthRestartError, FloodWaitError, SessionPasswordNee
 import time
 import os
 from dotenv import load_dotenv
+import asyncio
 
 def get_env_value(key, prompt):
     """Получает значение из .env или запрашивает у пользователя"""
@@ -48,8 +49,17 @@ async def authenticate_client():
 
     print("Подключаемся к Telegram API...")
     
-    # Создание клиента
-    client = TelegramClient('session_name', api_id, api_hash)
+    # Создание клиента с информацией об устройстве
+    client = TelegramClient(
+        'session_name',
+        api_id,
+        api_hash,
+        device_model="Desktop",
+        system_version="Windows 10",
+        app_version="2.0",
+        lang_code="en",
+        system_lang_code="en-US"
+    )
     
     max_retries = 3
     retry_count = 0

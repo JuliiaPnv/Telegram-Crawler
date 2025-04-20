@@ -1,0 +1,18 @@
+# Файлы, создаваемые при работе программы
+daily_posts.png
+session_name.session
+telegram_stats.csv
+
+# Файлы Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Файлы окружения
+.env
+
+# Файлы IDE
+.vscode/
+.idea/
+*.swp
+*.swo 

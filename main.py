@@ -1,6 +1,6 @@
 import asyncio
 from auth import authenticate_client
-from data_collector import collect_telegram_data
+from data_collector import collect_telegram_data, create_visualization
 
 async def main():
     try:
@@ -9,7 +9,12 @@ async def main():
         
         try:
             # Сбор данных
-            await collect_telegram_data(client)
+            df = await collect_telegram_data(client)
+            
+            # Создание визуализации, если есть данные
+            if df is not None:
+                create_visualization(df)
+                
         finally:
             # Отключение клиента
             await client.disconnect()

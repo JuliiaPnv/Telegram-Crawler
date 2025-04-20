@@ -4,93 +4,104 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import asyncio
 from asyncio import iscoroutine
+import pytz
+import os
 
-async def process_channel(client, channel, stats, university):
-    """Обработка канала и сбор статистики"""
+async def process_channel(client, channel):
+    """Обработка одного канала/группы"""
     try:
-        print(f"Собираем сообщения из {channel.title if hasattr(channel, 'title') else channel.name}...")
-        # Запрос истории сообщений
-        resp = client(GetHistoryRequest(
-            peer=channel.id,
-            offset_id=0,
-            offset_date=datetime.now() - timedelta(days=30),
-            add_offset=0,
-            limit=100,
-            max_id=0,
-            min_id=0,
-            hash=0
-        ))
-        # Ждем результат, если это корутина, иначе используем напрямую
-        if iscoroutine(resp):
-            messages = await resp
-        else:
-            messages = resp
-        print(f"Найдено {len(messages.messages)} сообщений")
-        # Сбор статистики
-        for message in messages.messages:
-            stats['university'].append(university)
-            stats['publication_date'].append(message.date)
-            stats['message'].append(message.message)
-            stats['views'].append(getattr(message, 'views', 0))
-            stats['forwards'].append(getattr(message, 'forwards', 0))
+        print(f"\nОбработка {channel.title}...")
+        stats = []
+        
+        # Устанавливаем московскую временную зону
+        moscow_tz = pytz.timezone('Europe/Moscow')
+        current_time = datetime.now(moscow_tz)
+        offset_date = current_time - timedelta(days=30)
+        
+        # Получаем сообщения за последние 30 дней
+        async for message in client.iter_messages(channel, offset_date=offset_date):
+            if message.text:  # Пропускаем сообщения без текста
+                # Конвертируем время в московское
+                message_time = message.date.astimezone(moscow_tz)
+                stats.append({
+                    'university': channel.title,
+                    'publication_date': message_time,
+                    'message': message.text,
+                    'views': message.views or 0,
+                    'forwards': message.forwards or 0
+                })
+        
+        print(f"Найдено {len(stats)} сообщений")
+        return stats
     except Exception as e:
-        print(f"Ошибка при обработке канала: {str(e)}")
+        print(f"Ошибка при обработке канала {channel.title}: {str(e)}")
+        return []
 
 async def collect_telegram_data(client):
     """Сбор данных из Telegram"""
-    # Словарь с альтернативными названиями университетов
-    universities = {
-        'МГУ': [
-            'МГУ',
-            'Московский государственный университет',
-            'МГУ им. Ломоносова',
-            'Московский университет',
-            'MSU',
-            'Lomonosov Moscow State University'
-        ],
-        'СПбГУ': [
-            'СПбГУ',
-            'Санкт-Петербургский государственный университет',
-            'Санкт-Петербургский университет',
-            'СПб университет',
-            'SPbU',
-            'Saint Petersburg State University'
-        ]
-    }
-    
     try:
-        # Словарь для хранения статистики
-        stats = {
-            'university': [],
-            'publication_date': [],
-            'message': [],
-            'views': [],
-            'forwards': []
+        # Словарь с альтернативными названиями университетов
+        universities = {
+            'МГУ': [
+                'мгу',
+                'московский государственный университет',
+                'мгу им. ломоносова',
+                'московский университет',
+                'msu',
+                'lomonosov moscow state university'
+            ],
+            'СПбГУ': [
+                'спбгу',
+                'санкт-петербургский государственный университет',
+                'санкт-петербургский университет',
+                'спб университет',
+                'spbu',
+                'saint petersburg state university'
+            ]
         }
         
         print("\nНачинаем поиск каналов и групп...")
-        # Получаем все диалоги
-        resp = client.iter_dialogs()
-        if iscoroutine(resp):
-            dialogs = await resp
-        else:
-            dialogs = resp
-        for dialog in dialogs:
-            uni = dialog.title if hasattr(dialog, 'title') else dialog.name
-            print(f"Найден канал/группа: {uni}")
-            await process_channel(client, dialog, stats, uni)
+        stats = []
+        
+        # Поиск каналов и групп
+        async for dialog in client.iter_dialogs():
+            dialog_title = dialog.title.lower() if hasattr(dialog, 'title') else dialog.name.lower()
+            
+            # Проверяем, относится ли канал к одному из университетов
+            for uni, keywords in universities.items():
+                if any(keyword in dialog_title for keyword in keywords):
+                    print(f"Найден канал/группа: {dialog.title if hasattr(dialog, 'title') else dialog.name}")
+                    channel_stats = await process_channel(client, dialog)
+                    stats.extend(channel_stats)
+                    break  # Если нашли совпадение, переходим к следующему каналу
         
         # Создание DataFrame
-        df = pd.DataFrame(stats)
-        
-        # Сохранение данных в CSV
-        df.to_csv('telegram_stats.csv', index=False)
-        
-        # Если данных нет, пропустить построение графика
-        if df.empty:
-            print("Нет данных для построения графика, пропускаем этот шаг.")
-            return
-        
+        if stats:
+            df = pd.DataFrame(stats)
+            try:
+                df.to_csv('telegram_stats.csv', index=False)
+                print("\nДанные успешно сохранены в telegram_stats.csv")
+            except PermissionError:
+                print("\nОшибка: Невозможно сохранить файл telegram_stats.csv. Возможно, он открыт в другой программе.")
+                return None
+            except Exception as e:
+                print(f"\nОшибка при сохранении данных в CSV: {str(e)}")
+                return None
+            return df
+        else:
+            print("\nНе найдено сообщений для анализа")
+            return None
+    except Exception as e:
+        print(f"Ошибка при сборе данных: {str(e)}")
+        return None
+
+def create_visualization(df):
+    """Создание визуализации данных"""
+    if df is None or df.empty:
+        print("Нет данных для построения графика")
+        return
+    
+    try:
         # Построение графика публикаций по дням
         df['date'] = pd.to_datetime(df['publication_date']).dt.date
         daily_posts = df.groupby(['university', 'date']).size().unstack(level=0)
@@ -108,15 +119,28 @@ async def collect_telegram_data(client):
         plt.gcf().autofmt_xdate()  # Автоматический поворот дат для лучшей читаемости
         
         plt.tight_layout()  # Автоматическая настройка отступов
-        plt.savefig('daily_posts.png', dpi=300, bbox_inches='tight')  # Сохраняем с высоким разрешением
+        
+        try:
+            plt.savefig('daily_posts.png', dpi=300, bbox_inches='tight')
+            print("\nГрафик сохранен в daily_posts.png")
+        except PermissionError:
+            print("\nОшибка: Невозможно сохранить файл daily_posts.png. Возможно, он открыт в другой программе.")
+        except Exception as e:
+            print(f"\nОшибка при сохранении графика: {str(e)}")
         
         # Вывод общей статистики
-        print("\nОбщая статистика:\n"
-              f"Всего публикаций: {len(df)}\n"
-              f"Количество уникальных каналов/групп: {df['university'].nunique()}\n"
-              f"Среднее количество просмотров: {df['views'].mean():.2f}\n"
-              f"Среднее количество репостов: {df['forwards'].mean():.2f}")
-        
+        try:
+            print("\nОбщая статистика:\n"
+                  f"Всего публикаций: {len(df)}\n"
+                  f"Количество уникальных каналов/групп: {df['university'].nunique()}\n"
+                  f"Среднее количество просмотров: {df['views'].mean():.2f}\n"
+                  f"Среднее количество репостов: {df['forwards'].mean():.2f}")
+        except Exception as e:
+            print(f"\nОшибка при подсчете статистики: {str(e)}")
+            
     except Exception as e:
-        print(f"Ошибка при сборе данных: {str(e)}")
-        raise 
+        print(f"\nОшибка при создании визуализации: {str(e)}\n"
+              "Проверьте, что:\n"
+              "1. Данные содержат правильные значения\n"
+              "2. Достаточно свободного места на диске\n"
+              "3. У программы есть права на запись в текущую директорию") 
